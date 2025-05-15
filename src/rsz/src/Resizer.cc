@@ -4329,4 +4329,105 @@ std::vector<rsz::MoveType> Resizer::parseMoveSequence(
   return result;
 }
 
+using sta::VertexPathIterator;
+using sta::PathAnalysisPt;
+using sta::Tag;
+using sta::Arrival;
+
+Slack Resizer::slackThroughInstanceAfterResize(Instance *inst, LibertyCell *size)
+{
+  Slack slack = INF;
+
+  // To make things simpler, ask for all required and arrival times to be populated
+  sta_->findRequireds();
+
+  // Visit all input pins on the instance
+  InstancePinIterator *iter = network_->pinIterator(inst);
+  while (iter->hasNext()) {
+    Pin* from_pin = iter->next();
+    if (network_->isLoad(from_pin)) {
+      Vertex *from_vertex = graph_->pinLoadVertex(from_pin);
+
+      // Visit all "paths" on the input pin
+      VertexPathIterator from_path_iter(from_vertex, sta_);
+      while (from_path_iter.hasNext()) {
+        Path *from_path = from_path_iter.next();
+        PathAnalysisPt *path_ap = from_path->pathAnalysisPt(sta_);
+        DcalcAnalysisPt *dcalc_ap = from_path->dcalcAnalysisPt(sta_);
+        Tag *from_tag = from_path->tag(sta_);
+
+        // Visit all edges going from input pin to output pin which represent propagation delay
+        VertexOutEdgeIterator edge_iter(from_vertex, graph_);
+        while (edge_iter.hasNext()) {
+          Edge *edge = edge_iter.next();
+          const TimingRole* role = edge->timingArcSet()->role();
+          // Note: I'm not fully sure about the roles we allow/disallow
+          if (!role->isTimingCheck() && role != TimingRole::tristateDisable()
+              && role != TimingRole::tristateEnable()
+              && role != TimingRole::clockTreePathMin()
+              && role != TimingRole::clockTreePathMax()) {
+
+            // Visit all arcs corresponding to the edge, taken from the target cell size
+            TimingArcSet *size_arc_set = size->findTimingArcSet(edge->timingArcSet());
+            for (TimingArc* arc : size_arc_set->arcs()) {
+
+              // Mutate a tag (accounts for false paths and other kinds of exceptional paths sensitive
+              // to concrete edges)
+              Tag *to_tag = search_->thruTag(from_tag, edge, arc->toEdge()->asRiseFall(),
+                               from_path->minMax(sta_), path_ap);
+
+              // Check the path hasn't terminated
+              if (to_tag) {
+                Path *to_path = Path::vertexPath(edge->to(graph_), to_tag, sta_);
+                if (to_path) {
+                  Pin *to_pin = edge->to(graph_)->pin();
+
+                  // Compute delay
+                  Slew in_slew = graph_->slew(edge->from(graph_),
+                                arc->fromEdge()->asRiseFall(),
+                                dcalc_ap->index());
+                  float load_cap = graph_delay_calc_->loadCap(to_pin, dcalc_ap);
+
+                  sta::LoadPinIndexMap load_pin_index_map(network_);
+                  auto dcalc_result
+                    = arc_delay_calc_->gateDelay(to_pin, arc,
+                                                 in_slew, load_cap,
+                                                 nullptr, /* TODO: parasitics */
+                                                 load_pin_index_map,
+                                                 dcalc_ap);
+
+                  // Compute slack for this arc
+                  Arrival to_arrival = from_path->arrival() + dcalc_result.gateDelay();
+
+                  Slack slack1 = (from_path->minMax(sta_) == min_) ?
+                      to_arrival - to_path->required()
+                      : to_path->required() - to_arrival;
+
+                  debugPrint(logger_,
+                     RSZ,
+                     "slack_estim",
+                     3,
+                     "from={} to={} arr={} delay={} req={}",
+                     from_path->to_string(sta_),
+                     to_path->to_string(sta_),
+                     delayAsString(from_path->arrival(), sta_),
+                     delayAsString(dcalc_result.gateDelay(), sta_),
+                     delayAsString(to_path->required(), sta_));
+
+                  if (slack1 < slack) {
+                    slack = slack1;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  delete iter;
+
+  return slack;
+}
+
 }  // namespace rsz

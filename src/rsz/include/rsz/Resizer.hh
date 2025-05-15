@@ -430,6 +430,8 @@ class Resizer : public dbStaState, public dbNetworkObserver
   static MoveType parseMove(const std::string& s);
   static std::vector<MoveType> parseMoveSequence(const std::string& sequence);
 
+  Slack slackThroughInstanceAfterResize(Instance *inst, LibertyCell *size);
+
  protected:
   void init();
   double computeDesignArea();

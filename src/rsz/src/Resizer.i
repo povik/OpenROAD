@@ -789,6 +789,14 @@ void set_debug_cmd(const char* net_name,
   resizer->setDebugGraphics(std::move(graphics));
 }
 
+Slack
+slack_through_instance_after_resize(Instance *inst, LibertyCell *cell)
+{
+  ensureLinked();
+  Resizer *resizer = getResizer();
+  return resizer->slackThroughInstanceAfterResize(inst, cell);
+}
+
 } // namespace
 
 %} // inline
