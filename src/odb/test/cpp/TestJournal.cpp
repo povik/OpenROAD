@@ -28,7 +28,6 @@ struct F_DEFAULT
   {
     dbDatabase::beginEco(block);
     func();
-    dbDatabase::endEco(block);
     dbDatabase::undoEco(block);
   }
   dbDatabase* db;

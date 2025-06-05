@@ -620,11 +620,8 @@ Test the hierarchical journalling
 
 BOOST_FIXTURE_TEST_CASE(test_hierarchy_journalling, F_HIERARCHY)
 {
-  // end the eco ready to undo
-  odb::dbDatabase::endEco(block);
   // undo the construction
   odb::dbDatabase::undoEco(block);
-  BOOST_TEST(odb::dbDatabase::checkEco(block) == 0);
   // sanity check nothing left.
   dbSet<dbModNet> parent_modnets = parent_mod->getModNets();
   BOOST_TEST(parent_modnets.size() == 0);
