@@ -1128,7 +1128,7 @@ void FastRouteCore::get3DRoute(odb::dbNet* db_net, GRoute& route)
 
   for (int edgeID = 0; edgeID < num_edges; edgeID++) {
     const TreeEdge* treeedge = &(treeedges[edgeID]);
-    if (treeedge->len > 0) {
+    if (treeedge->len > 0 || treeedge->route.routelen > 0) {
       int routeLen = treeedge->route.routelen;
       const std::vector<GPoint3D>& grids = treeedge->route.grids;
       const int num_terminals = sttrees_[netID].num_terminals;
