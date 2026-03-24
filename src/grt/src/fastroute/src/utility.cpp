@@ -359,6 +359,7 @@ void FastRouteCore::ensurePinCoverage()
     const int num_edges = sttrees_[net_id].num_edges();
     const int num_terminals = sttrees_[net_id].num_terminals;
 
+    // Build the layer range found in routes at each pin position
     std::map<odb::Point, std::pair<int16_t, int16_t>> pin_pos_to_layer_range;
     for (int i = 0; i < num_terminals; i++) {
       odb::Point pin_pos(treenodes[i].x, treenodes[i].y);
@@ -374,32 +375,50 @@ void FastRouteCore::ensurePinCoverage()
           odb::Point node_pos(grids[i].x, grids[i].y);
           if (pin_pos_to_layer_range.find(node_pos)
               != pin_pos_to_layer_range.end()) {
-            pin_pos_to_layer_range[node_pos].first = std::min(
-                pin_pos_to_layer_range[node_pos].first, grids[i].layer);
-            pin_pos_to_layer_range[node_pos].second = std::max(
-                pin_pos_to_layer_range[node_pos].second, grids[i].layer);
+            auto& [min_layer, max_layer] = pin_pos_to_layer_range[node_pos];
+            min_layer = std::min(min_layer, grids[i].layer);
+            max_layer = std::max(max_layer, grids[i].layer);
           }
         }
       }
     }
 
+    // For each unique pin position, check that all pin layers are covered
+    // by the route layer range).
+    std::set<odb::Point> processed_positions;
     for (int pin_idx = 0; pin_idx < num_terminals; pin_idx++) {
       const TreeNode& pin_node = treenodes[pin_idx];
       odb::Point pin_pos(pin_node.x, pin_node.y);
+      if (!processed_positions.insert(pin_pos).second) {
+        continue;
+      }
+
+      // Find the full pin layer range at this position using all pins
+      int16_t pin_botL, pin_topL;
+      getViaStackRange(net_id, pin_idx, pin_botL, pin_topL);
+      if (pin_botL > pin_topL) {
+        continue;  // no pins found (shouldn't happen for a terminal)
+      }
+
       auto [min_layer, max_layer] = pin_pos_to_layer_range[pin_pos];
-      if (pin_node.botL < min_layer || pin_node.botL > max_layer) {
+
+      // Compute the full range that must be connected: union of pin layers
+      // and route layers at this position
+      int16_t via_bot = pin_botL;
+      int16_t via_top = pin_topL;
+      if (min_layer <= max_layer) {
+        via_bot = std::min(via_bot, min_layer);
+        via_top = std::max(via_top, max_layer);
+      }
+
+      // Add a via edge spanning the full range if any pin layer falls
+      // outside the existing route range, ensuring layer connectivity
+      if (via_bot < via_top && (pin_botL < min_layer || pin_topL > max_layer)) {
         Route via_route;
         via_route.type = RouteType::MazeRoute;
-        if (pin_node.botL < min_layer) {
-          via_route.routelen = min_layer - pin_node.botL;
-          for (int16_t l = pin_node.botL; l <= min_layer; l++) {
-            via_route.grids.push_back({pin_node.x, pin_node.y, l});
-          }
-        } else {
-          via_route.routelen = pin_node.botL - max_layer;
-          for (int16_t l = max_layer; l <= pin_node.botL; l++) {
-            via_route.grids.push_back({pin_node.x, pin_node.y, l});
-          }
+        via_route.routelen = via_top - via_bot;
+        for (int16_t l = via_bot; l <= via_top; l++) {
+          via_route.grids.push_back({pin_node.x, pin_node.y, l});
         }
 
         TreeEdge new_edge;
