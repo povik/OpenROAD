@@ -4,7 +4,13 @@
 //
 // syn IR backend for slang-elab
 //
-// Routing of slang-elab diagnostics to utl::Logger.
+// Logger/source-manager plumbing for the slang-elab frontend.
+//
+// The frontend's own Yosys-style logging entry points (log, log_warning,
+// log_error, ...) are provided inline by slang_frontend.h under
+// SLANG_NO_YOSYS, so they are not defined here. What remains is the
+// OpenROAD-side scope that lets our abort_helpers route diagnostics that
+// the frontend hands back to us through utl::Logger.
 //
 // This TU pulls utl/Logger.h (and transitively spdlog's bundled fmt) and so
 // must not include any slang header: slang brings a different fmt version,
@@ -13,13 +19,8 @@
 
 #include "diagnostics.h"
 
-#include <cstdarg>
-#include <cstdio>
-#include <cstdlib>
-#include <string>
 #include <string_view>
 
-#include "log_stubs.h"
 #include "utl/Logger.h"
 
 namespace slang_frontend {
@@ -64,89 +65,3 @@ ElabDiagnosticScope::~ElabDiagnosticScope()
 }
 
 }  // namespace slang_frontend
-
-// The Yosys logging entry points the vendored frontend calls, declared in
-// log_stubs.h and implemented here so they reach the user through utl::Logger
-// rather than raw stderr. Keeping them here is what lets
-// third-party/slang-elab/ stay untouched.
-namespace Yosys {
-
-namespace {
-
-// One code per shim, not per message: the vendored call sites pass a format
-// string, so there is nothing here to hang a distinct message ID off.
-constexpr int kFrontendError = 79;
-constexpr int kFrontendWarning = 80;
-
-// Renders a printf-style message and trims the trailing newline the Yosys
-// convention includes; utl::Logger supplies its own.
-std::string formatMessage(const char* fmt, va_list ap)
-{
-  va_list measure;
-  va_copy(measure, ap);
-  const int length = std::vsnprintf(nullptr, 0, fmt, measure);
-  va_end(measure);
-  if (length <= 0) {
-    return {};
-  }
-
-  std::string message(length, '\0');
-  std::vsnprintf(message.data(), length + 1, fmt, ap);
-  while (!message.empty()
-         && (message.back() == '\n' || message.back() == '\r')) {
-    message.pop_back();
-  }
-  return message;
-}
-
-}  // namespace
-
-void log(const char* fmt, ...)
-{
-  va_list ap;
-  va_start(ap, fmt);
-  const std::string message = formatMessage(fmt, ap);
-  va_end(ap);
-
-  utl::Logger* logger = slang_frontend::elabLogger();
-  if (logger) {
-    logger->reportLiteral(message);
-  } else {
-    std::fprintf(stderr, "%s\n", message.c_str());
-  }
-}
-
-void log_warning(const char* fmt, ...)
-{
-  va_list ap;
-  va_start(ap, fmt);
-  const std::string message = formatMessage(fmt, ap);
-  va_end(ap);
-
-  utl::Logger* logger = slang_frontend::elabLogger();
-  if (logger) {
-    logger->warn(utl::SYN, kFrontendWarning, "{}", message);
-  } else {
-    std::fprintf(stderr, "Warning: %s\n", message.c_str());
-  }
-}
-
-[[noreturn]] void log_error(const char* fmt, ...)
-{
-  va_list ap;
-  va_start(ap, fmt);
-  const std::string message = formatMessage(fmt, ap);
-  va_end(ap);
-
-  utl::Logger* logger = slang_frontend::elabLogger();
-  if (logger) {
-    slang_frontend::reportError(logger, kFrontendError, message);
-  }
-
-  // Reached only outside an elaboration, where there is no logger to throw
-  // through; still has to honour [[noreturn]].
-  std::fprintf(stderr, "%s\n", message.c_str());
-  std::abort();
-}
-
-}  // namespace Yosys
